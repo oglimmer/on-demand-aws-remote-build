@@ -1,0 +1,66 @@
+---
+- hosts: all
+  become: true
+  user: admin
+  vars:
+    deb_architecture:
+      aarch64: arm64
+      x86_64: amd64
+  tasks:
+    - name: Install apt dependencies for docker
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - lsb-release
+          - gnupg
+          - curl
+          - git
+        state: latest
+        update_cache: true
+
+    - name: docker-repo - get gpg key
+      ansible.builtin.get_url:
+        url: "https://download.docker.com/{{ ansible_system | lower }}/{{ ansible_distribution | lower }}/gpg"
+        dest: /etc/apt/trusted.gpg.d/docker-repo.asc
+
+    - name: docker-repo - add source
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ [ansible_architecture] | map('extract', deb_architecture) | first }} signed-by=/etc/apt/trusted.gpg.d/docker-repo.asc] https://download.docker.com/{{ ansible_system | lower }}/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: latest
+        update_cache: true
+
+    - name: Docker login to oglimmer registry
+      docker_login:
+        username: "{{ lookup('ansible.builtin.env', 'REGISTRY_USER') }}"
+        password: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') }}"
+        registry: registry.oglimmer.com
+
+    - name: Clone picz repository
+      git:
+        repo: https://x-access-token:{{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}@github.com/oglimmer/picz.git
+        dest: /opt/build/picz
+        update: no
+
+    - name: Copy docker-build.sh
+      copy:
+        src: docker-build.sh
+        dest: /opt/build/docker-build.sh
+        mode: 0755
+
+    - name: Run build script
+      ansible.builtin.shell: /opt/build/docker-build.sh > /tmp/build.log 2>&1
+      args:
+        chdir: /opt/build
+            
+    - name: Copy back build log
+      ansible.builtin.fetch:
+        src: /tmp/build.log
+        dest: "{{ lookup('ansible.builtin.env', 'HOME') }}/Desktop/build.log"
